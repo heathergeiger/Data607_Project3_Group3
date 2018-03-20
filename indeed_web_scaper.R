@@ -62,7 +62,7 @@ skills <- c("data engineering", "hadoop", "python", "sql", "hive", "spark", "kaf
 
 extract_skills <- function(link){
 	resume_link_read_in <- read_html(curl(link,handle = curl::new_handle("useragent" = "Mozilla/5.0")))
-	extracted_skills <- unlist(str_extract_all(tolower(resume_link_read_in),skills))
+	extracted_skills <- unique(unlist(str_extract_all(tolower(resume_link_read_in),skills)))
 	return(ifelse(skills %in% extracted_skills,1,0))
 }
 
