@@ -1,0 +1,304 @@
+# Clean New York and San Francisco processed resumes and extract skills
+## Heather Geiger - March 21, 2018
+
+## Load libraries.
+
+```{r}
+library(stringr)    #For string operations
+library(rvest)      #For screen scrapper
+library(tokenizers) #
+library(tidyverse)  #For Tidyverse
+library(RCurl)      #For File Operations
+library(dplyr)      #For Manipulating the data frames
+library(DT)         #For Data table package
+library(curl)
+
+library(RJSONIO)
+```
+
+## Load Rdata files.
+
+Load both Rdata files from previous step.
+
+First, load for New York, then for San Francisco. Delete everything but the three objects we really need, which are:
+
+1. job_titles_and_descriptions_across_resumes (data frame)
+2. skills_per_resume (data frame)
+3. executive_summaries (vector)
+
+Next, we will want to combine all of this information into one long format data frame.
+
+First column - City.
+Next column - Resume.num.
+Third column - Resume.section. This will say whether we are referring to an item from job titles, descriptions, skills, or executive summaries.
+Final column - Text. This will give the actual value.
+
+```{r}
+load("resumes_processed.Rdata")
+rm(list=setdiff(ls(),c("job_titles_and_descriptions_across_resumes","skills_per_resume","executive_summaries")))
+ls()
+city <- "New York"
+
+job_titles_and_descriptions_across_resumes <- gather(job_titles_and_descriptions_across_resumes,Resume.section,Text,-Resume.num)
+job_titles_and_descriptions_across_resumes <- data.frame(City = city,job_titles_and_descriptions_across_resumes,stringsAsFactors=FALSE)
+#head(job_titles_and_descriptions_across_resumes);tail(job_titles_and_descriptions_across_resumes)
+skills_per_resume <- data.frame(City = city,Resume.num = skills_per_resume$Resume.num,
+				Resume.section = "Skills",
+				Text = skills_per_resume$Skill,stringsAsFactors=FALSE)
+#head(skills_per_resume);tail(skills_per_resume)
+executive_summaries <- data.frame(City = city,
+			Resume.num = setdiff(1:1000,c(185,200,763,786,795,815,66,111,213,290,294,505,627,837)),
+			Resume.section = "Executive.summary",
+			Text = executive_summaries,stringsAsFactors=FALSE)
+#head(executive_summaries);tail(executive_summaries)
+
+new_york_resumes <- rbind(job_titles_and_descriptions_across_resumes,skills_per_resume,executive_summaries)
+new_york_resumes <- new_york_resumes %>% arrange(Resume.num)
+
+#head(new_york_resumes);tail(new_york_resumes)
+
+rm(list=setdiff(ls(),"new_york_resumes"))
+ls()
+```
+
+```{r}
+load("resumes_processed_san_francisco.Rdata")
+rm(list=setdiff(ls(),c("job_titles_and_descriptions_across_resumes","skills_per_resume","executive_summaries","valid_json","descriptions_for_every_job","new_york_resumes")))
+ls()
+city <- "San Francisco"
+
+job_titles_and_descriptions_across_resumes <- gather(job_titles_and_descriptions_across_resumes,Resume.section,Text,-Resume.num)		
+job_titles_and_descriptions_across_resumes <- data.frame(City = city,job_titles_and_descriptions_across_resumes,stringsAsFactors=FALSE)
+skills_per_resume <- data.frame(City = city,Resume.num = skills_per_resume$Resume.num,
+                                Resume.section = "Skills",
+                                Text = skills_per_resume$Skill,stringsAsFactors=FALSE)
+executive_summaries <- data.frame(City = city,
+				Resume.num = which(valid_json == TRUE & descriptions_for_every_job == TRUE),
+				Resume.section = "Executive.summary",
+				Text = executive_summaries,stringsAsFactors=FALSE)
+head(executive_summaries);tail(executive_summaries)
+
+san_francisco_resumes <- rbind(job_titles_and_descriptions_across_resumes,skills_per_resume,executive_summaries)
+san_francisco_resumes <- san_francisco_resumes %>% arrange(Resume.num)
+
+head(san_francisco_resumes);tail(san_francisco_resumes)
+
+rm(list=setdiff(ls(),c("new_york_resumes","san_francisco_resumes")))
+ls()
+```
+
+Now we can combine new_york_resumes and san_francisco_resumes and proceed with clean-up and analysis.
+
+```{r}
+resumes_across_cities <- rbind(new_york_resumes,san_francisco_resumes)
+rm(new_york_resumes);rm(san_francisco_resumes)
+
+resumes_across_cities <- resumes_across_cities %>% arrange(Resume.num,City)
+```
+
+Replace special encoding "\\u002F" with a "/".
+
+```{r}
+resumes_across_cities$Text <- str_replace_all(resumes_across_cities$Text,pattern='\\\\u002F',replace='/')
+```
+
+```{r, echo=FALSE,eval=TRUE}
+save.image("resumes_across_cities.Rdata")
+```
+
+Now for each resume (unique combination of City and Resume.num), we want to check for the occurence of various strings.
+
+Read in a table with the skill heading plus synonyms. 
+
+All in lowercase. 
+
+We should require these be bounded on either side by either the start/end of the string, or whitespace, or punctuation.
+
+Start by getting a list of keywords, with a vector of keywords per skill.
+
+```{r}
+keywords <- read.table("keywords.txt",header=TRUE,check.names=FALSE,stringsAsFactors=FALSE,sep="\t")
+keywords <- keywords[grep('This is probably too tough',keywords$Other.notes,invert=TRUE),]
+
+keyword_list <- vector("list",length=nrow(keywords))
+
+for(i in 1:nrow(keywords))
+{
+keywords_this_row <- keywords$Skill[i]
+if(keywords$Synonyms[i] != "None"){
+	keywords_this_row <- c(keywords_this_row,unlist(strsplit(keywords$Synonyms[i],",")[[1]]))
+	}
+keyword_list[[i]] <- keywords_this_row
+}
+```
+
+Write a function to give a pattern for a keyword if it has a word boundary, comma, or space on each side.
+
+Then if there are multiple keywords, paste these together with a pipe.
+
+Finally, run this function for every item in keyword_list.
+
+```{r}
+#Couldn't figure out how to get a regex for a space, comma, or word boundary. However did get one that can get either a space or comma.
+space_or_comma <- "[[:space:],]"
+word_boundary <- "\\b"
+
+pattern_for_one_keyword <- function(keyword){
+	regexes <- paste0(space_or_comma,keyword,space_or_comma)
+	regexes <- c(regexes,paste0(word_boundary,keyword,word_boundary))
+	regexes <- c(regexes,paste0(word_boundary,keyword,space_or_comma))
+	regexes <- c(regexes,paste0(space_or_comma,keyword,word_boundary))
+	return(paste0(regexes,collapse="|"))
+}
+
+pattern_for_multiple_keywords <- function(keyword_vector){
+	if(length(keyword_vector) == 1){return(pattern_for_one_keyword(keyword_vector))}
+	if(length(keyword_vector) > 1){
+		individual_regexes <- c()
+		for(i in 1:length(keyword_vector))
+		{
+			individual_regexes <- c(individual_regexes,pattern_for_one_keyword(keyword_vector[i]))
+		}
+	return(paste0(individual_regexes,collapse="|"))	
+	}
+}
+
+keyword_regexes <- unlist(lapply(keyword_list,function(x)pattern_for_multiple_keywords(x)))
+```
+
+We can now use keyword_regexes along with str_detect to give a TRUE/FALSE value for whether the text contains the pattern.
+
+```{r}
+num_resumes_per_skill <- c()
+
+for(i in 1:length(keyword_regexes))
+{
+skill <- keyword_regexes[i]
+skill_in_text <- str_detect(tolower(resumes_across_cities$Text),skill)
+resumes_across_cities_incl_this_skill <- resumes_across_cities[skill_in_text,]
+num_resumes_this_skill <- length(unique(paste0(resumes_across_cities_incl_this_skill$City,resumes_across_cities_incl_this_skill$Resume.num)))
+num_resumes_per_skill <- c(num_resumes_per_skill,num_resumes_this_skill)
+print(paste0("Skill ",keywords$Skill[i]," found in ",num_resumes_this_skill," resumes"))
+}
+```
+
+Let's remove a few skills that were found in very few resumes.
+
+Also now let's redo also collecting information for which cities the resumes come from.
+
+```{r}
+num_resumes_per_skill <- data.frame(Skill = keywords$Skill,
+				Num.resumes = num_resumes_per_skill,
+				stringsAsFactors=FALSE)
+
+head(num_resumes_per_skill[order(num_resumes_per_skill$Num.resumes),],n=10)
+```
+
+It seems reasonable to look only at skills found in at least 10 resumes.
+
+```{r}
+keywords <- keywords[num_resumes_per_skill$Num.resumes >= 10,]
+keyword_regexes <- keyword_regexes[num_resumes_per_skill$Num.resumes >= 10]
+```
+
+```{r, echo=FALSE,eval=TRUE}
+for(i in 1:length(keyword_regexes))
+{
+skill <- keyword_regexes[i]
+skill_in_text <- str_detect(tolower(resumes_across_cities$Text),skill)
+resumes_across_cities_incl_this_skill <- resumes_across_cities[skill_in_text,]
+resumes_across_cities_incl_this_skill <- resumes_across_cities_incl_this_skill[!(duplicated(paste0(resumes_across_cities_incl_this_skill$City,resumes_across_cities_incl_this_skill$Resume.num))),]
+num_resumes_this_skill <- data.frame(resumes_across_cities_incl_this_skill %>% group_by(City) %>% summarize(Num.resumes = n()),stringsAsFactors=FALSE)
+num_resumes_this_skill <- data.frame(Skill = keywords$Skill[i],Type = keywords$Soft.or.technical[i],num_resumes_this_skill,stringsAsFactors=FALSE)
+if(i == 1){num_resumes_per_skill <- num_resumes_this_skill}
+if(i > 1){num_resumes_per_skill <- rbind(num_resumes_per_skill,num_resumes_this_skill)}
+print(paste0("Skill ",keywords$Skill[i]," found in ",sum(num_resumes_this_skill$Num.resumes)," resumes"))
+}
+
+table(num_resumes_per_skill$City)
+head(num_resumes_per_skill)
+tail(num_resumes_per_skill)
+```
+
+Finally, add a column Percent.resumes which expresses the percentage of resumes from the city that contain the skill.
+
+```{r}
+cities_plus_resumes <- resumes_across_cities[!(duplicated(paste0(resumes_across_cities$City,resumes_across_cities$Resume.num))),]
+
+resumes_per_city <- data.frame(table(cities_plus_resumes$City))
+resumes_per_city[,1] <- as.vector(resumes_per_city[,1])
+
+colnames(resumes_per_city) <- c("City","Total.resumes.this.city")
+
+num_resumes_per_skill <- merge(num_resumes_per_skill,resumes_per_city,"City") %>% mutate(Percent.of.resumes.this.city = round(Num.resumes*100/Total.resumes.this.city,digits=2))
+
+head(num_resumes_per_skill);tail(num_resumes_per_skill)
+
+ggplot(num_resumes_per_skill,aes(x=Skill,y=Percent.of.resumes.this.city,fill=City)) + geom_bar(stat="identity",position="dodge") + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + facet_wrap(~Type,scales="free")
+ggplot(num_resumes_per_skill,aes(x=Skill,y=Percent.of.resumes.this.city,fill=City)) + 
+geom_bar(stat="identity",position="dodge") + 
+theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+facet_wrap(~Type,scales="free") +
+ggtitle("Percent of resumes in each city listing a skill,\nincluding soft + technical skills")
+```
+
+It looks from first glance like data science job seekers in New York may be somewhat more likely to include soft skills keywords like collaboration, communication, and presentation in their resume.
+
+San Francisco data science job seekers seem a bit more likely to include leadership soft skills. However, as I included "led" and "leading" as keywords for this skill, it's also possible that San Francisco has more data science job seekers who were in management roles. Not necessarily that they just wanted to highlight their leadership as a soft skill.
+
+It's a bit hard to see the technical skills in detail, as this plot has more bars. Let's plot just technical skills now.
+
+Also remove "risk modeling" and "data wrangling". Even also allowing just "wrangling" or "wrangled", still very few resumes with this skill listed using our set of keywords.
+
+Also, order skills by their max in the two cities, and create two panels for lower vs. higher frequency skills.
+
+```{r}
+technical_skills_to_plot <- num_resumes_per_skill[num_resumes_per_skill$Type == "technical" & !(num_resumes_per_skill$Skill %in% c("data wrangling","risk modeling")),]
+max_percent_of_resumes_per_city_per_skill <- aggregate(Percent.of.resumes.this.city ~ Skill,technical_skills_to_plot,max)
+max_percent_of_resumes_per_city_per_skill <- max_percent_of_resumes_per_city_per_skill %>% arrange(Percent.of.resumes.this.city)
+
+technical_skills_to_plot <- data.frame(technical_skills_to_plot,Frequency.level = rep(NA,times=nrow(technical_skills_to_plot)),stringsAsFactors=FALSE)
+
+technical_skills_to_plot$Frequency.level <- ifelse(technical_skills_to_plot$Skill %in% max_percent_of_resumes_per_city_per_skill$Skill[max_percent_of_resumes_per_city_per_skill[,2] < 25],"Lower frequency skills","Higher frequency skills")
+
+technical_skills_to_plot$Skill <- factor(technical_skills_to_plot$Skill,levels=max_percent_of_resumes_per_city_per_skill$Skill)
+
+ggplot(technical_skills_to_plot,
+aes(x=Skill,y=Percent.of.resumes.this.city,fill=City)) +
+geom_bar(stat="identity",position="dodge") +
+ggtitle("Technical") +
+facet_wrap(~Frequency.level,scales="free") +
+theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+Still a bit hard to read! I think let's use table to look at city differences.
+
+```{r}
+technical_skills_spread <- technical_skills_to_plot %>% 
+			select(setdiff(colnames(technical_skills_to_plot),c("Num.resumes","Total.resumes.this.city"))) %>%
+			spread(City,Percent.of.resumes.this.city)
+colnames(technical_skills_spread)[4:5] <- c("New.York","San.Francisco")
+
+technical_skills_spread[,c(1,4,5)] %>% mutate(City.difference = New.York - San.Francisco) %>% arrange(desc(abs(City.difference)))
+```
+
+We find that New York data science job seekers appear substantially more likely to include data visualization keywords in their resumes.
+
+Some other skills have smaller differences. For example, San Francisco data science job seekers had keywords related to machine learning in around 4% more of their resumes.
+
+Now, take mean across cities and use that to plot, coloring by skill for clearer viewing.
+
+```{r}
+technical_skills_to_plot <- technical_skills_spread %>% 
+			mutate(Mean.percent.of.resumes.across.cities = (New.York + San.Francisco)/2)
+
+mycol <- c("#004949","#009292","#FF6DB6","#FFB677","#490092","#006DDB","#B66DFF","#6DB6FF","#B6DBFF","#920000","#924900","#DBD100","#24FF24","#FFFF6D","#000000") #Set up colorblind friendly vector. 
+
+ggplot(technical_skills_to_plot,
+aes(x=Skill,y=Mean.percent.of.resumes.across.cities,fill=Skill)) +
+geom_bar(stat="identity") +
+ggtitle("Technical skills found by keywords") +
+theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+scale_fill_manual(values=rep(mycol,times=2)) +
+xlab("Mean percent of resumes across cities")
+```

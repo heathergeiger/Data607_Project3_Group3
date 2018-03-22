@@ -1,0 +1,47 @@
+Skill	Soft.or.technical	Synonyms	Other.notes
+algorithm	technical	None	None
+appengine	technical	None	None
+aws	technical	None	None
+big data	technical	None	None
+c++	technical	None	None
+collaboration	soft	collaborative,collaborate,collaborated,team player,teamwork	None
+communication	soft	communicative,communicate,communicated	None
+prediction	technical	predictive,predict,predicted	None
+conveying technical information to non-technical people	soft	None	This is probably too tough to evaluate without natural language processing. Something to look for in the future though if we re-visit this data after learning some NLP.
+couchdb	technical	None	None
+creativity	soft	creative	None
+critical thinking	soft	critical thinker	None
+cultivating relationships with internal and external stakeholders	soft	None	This is probably too tough to evaluate without natural language processing. Something to look for in the future though if we re-visit this data after learning some NLP.
+customer service	soft	None	None
+data manipulation	technical	manipulated,manipulation	None
+data wrangling	technical	wrangling,wrangled	None
+data mining	technical	mined,mining	None
+d3.js	technical	None	None
+decision making	soft	made decisions,making decisions,decision maker	None
+decision tree	technical	decision trees	None
+ecl	technical	None	None
+flare	technical	None	None
+google visualization api	technical	None	None
+hadoop	technical	None	None
+java	technical	javascript	None
+leadership	soft	led,leader,leading	None
+machine learning	technical	None	None
+matlab	technical	None	None
+microsoft excel	technical	None	None
+mining social media	technical	mined social media	None
+modeling	technical	models,modeled	None
+perl	technical	None	None
+powerpoint	technical	None	None
+presentation	soft	presenting,presented	None
+problem solving	soft	solving problems,solved problems	None
+python	technical	None	None
+r	technical	None	Need to do word search or require a comma or space before for this one.
+raphael.js	technical	None	None
+risk modeling	technical	modeling risk,modeling risks,modeled risks,modeled risk	None
+sas	technical	None	None
+scripting languages	technical	scripting	None
+sql	technical	None	None
+statistics	technical	statistical	None
+tableau	technical	None	None
+a/b testing	technical	None	None
+data visualization	technical	visualization,visualized	None
