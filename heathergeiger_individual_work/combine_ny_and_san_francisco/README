@@ -1,1 +1,2 @@
-
+Note: Resume.num gives the index of the resume in the search results for that city. 
+So for some Resume.num values, they will occur for both New York and San Francisco.
