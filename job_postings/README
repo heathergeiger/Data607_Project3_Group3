@@ -1,0 +1,4 @@
+Helping Ritesh and Simon debug their job posting scripts after they got banned from Monster.com. 
+So far so good for me on getting banned, and I've saved results for searching as written in their script.
+
+Also fixed a bug where for loop would break if job posting page did not contain a proper "JobDescription" node.
