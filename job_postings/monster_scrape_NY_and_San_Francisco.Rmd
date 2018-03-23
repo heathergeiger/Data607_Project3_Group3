@@ -1,0 +1,160 @@
+---
+output: rmarkdown::github_document
+---
+
+## Set URLs.
+
+Set URLs based on the URLs for an actual search result in my browser.
+Did it this way because this way can search for job title of "data scientist" (not just keyword search). 
+Can also search for a reasonable radius around the city.
+
+```{r, echo=TRUE, eval=TRUE}
+new_york_url <- "https://www.monster.com/jobs/search/New-York+New-York-City+Data-Scientist_125?where=New-York__2c-NY&rad=20-miles"
+
+san_francisco_url <- "https://www.monster.com/jobs/search/California+San-Francisco+Data-Scientist_125?where=San-Francisco__2c-CA&rad=20-miles"
+```
+
+## Load libraries.
+
+```{r, echo=TRUE, eval=TRUE}
+library(stringr)    #For string operations
+library(rvest)      #For screen scrapper
+library(tokenizers) #
+library(tidyverse)  #For Tidyverse
+library(RCurl)      #For File Operations
+library(dplyr)      #For Manipulating the data frames
+library(DT)         #For Data table package
+library(curl)
+```
+
+## Set city to New York or San Francisco, then make output directory and pg. 1 URL object.
+
+```{r, echo=TRUE,eval=TRUE}
+#city2search <- "NewYork"
+#state2search <- "NY"
+#data_store_path <- paste0("job_postings_",city2search,"_",state2search)
+
+#dir.create(data_store_path)
+
+#searchPage_url <- new_york_url
+```
+
+```{r, echo=FALSE,eval=TRUE}
+city2search <- "SanFrancisco"
+state2search <- "CA"
+data_store_path <- paste0("job_postings_",city2search,"_",state2search)
+
+dir.create(data_store_path)
+
+searchPage_url <- san_francisco_url
+```
+
+Run this part only once to avoid getting banned.
+
+If you run subsequent times, load in from Rdata file.
+
+Base URL gives first 25 results, then run pasting "&page=2", "&page=3", etc. to get all results.
+
+Let's take the first 500 results per city, so the first 20 pages.
+
+I checked and both New York and San Francisco have over 500 jobs in the search results.
+
+```{r, echo=TRUE, eval=TRUE}
+searchPage <- read_html(searchPage_url)
+
+searchAllJobUrls <- unlist(str_extract_all(searchPage,'(job-openings\\.monster\\.com\\/)\\w.[^\\"]+'))
+searchAllJobUrls <- paste("https://",searchAllJobUrls,sep = "")
+
+searchAllJobUrls <- searchAllJobUrls[1:25]
+
+for(page in 2:20)
+{
+searchPage <- read_html(paste0(searchPage_url,"&page=",page))
+searchAllJobUrls_this_page <- unlist(str_extract_all(searchPage,'(job-openings\\.monster\\.com\\/)\\w.[^\\"]+'))
+searchAllJobUrls_this_page <- paste("https://",searchAllJobUrls_this_page,sep = "")
+searchAllJobUrls <- c(searchAllJobUrls,searchAllJobUrls_this_page[1:25])
+}
+
+save(searchAllJobUrls,file=paste0(data_store_path,"/searchAllJobUrls.Rdata"))
+length(unique(tolower(searchAllJobUrls)))
+```
+
+If rerunning this script after already scraping the search results, set above to eval=FALSE and the below to eval=TRUE.
+
+```{r, echo=TRUE,eval=FALSE}
+load(paste0(data_store_path,"/searchAllJobUrls.Rdata"))
+```
+
+To make sure everything looks correct, show URLs 1, 26, and 51 so we can compare to the links we get by looking in a browser at search pages 1, 2, and 3.
+
+```{r, echo=TRUE, eval=TRUE}
+searchAllJobUrls[c(1,26,51)]
+```
+
+So, these match what we see by looking in browser results.
+
+However, initially we found somewhat concerningly that the number of unique URLs is less than 500.
+
+Looking manually through a few pages, it appears sometimes the same job will be listed under two different headlines (eg a "Data Scientist" job at Open Systems Technologies was listed as "Data Scientist" on pg2 and "Machine Learning Data Scientist" on pg3).
+
+I think it should be fine to just run unique on searchAllJobUrls, and then proceed as normal.
+
+```{r, echo=TRUE, eval=TRUE}
+searchAllJobUrls <- unique(searchAllJobUrls)
+length(searchAllJobUrls)
+```
+
+Now, read from each URL in searchAllJobUrls and save text in job description.
+
+```{r, echo=TRUE,eval=TRUE}
+job_sum_text <- vector(mode = "character", length = length(searchAllJobUrls))
+
+for(i in 1:length(searchAllJobUrls))
+{
+h <- read_html(searchAllJobUrls[i])
+forecasthtml <- html_nodes(h,"#JobDescription")
+#Adding a check to ensure that there actually is a node with "JobDescription", as one of the URLs did not have this node and it broke the for loop.
+if(length(forecasthtml) == 1)
+{
+        job_sum_text[i] <- html_text(forecasthtml)
+}
+if(length(forecasthtml) != 1)
+{
+        job_sum_text[i] <- "" #Add an empty string to job_sum_text for now for these. May want to delete these later on.
+}
+}
+
+save(job_sum_text,file=paste0(data_store_path,"/job_description_text.Rdata"))
+```
+
+If rerunning this script after already scraping the job pages, set above to eval=FALSE and below to eval=TRUE.
+
+```{r, echo=TRUE, eval=FALSE}
+load(paste0(data_store_path,"/job_description_text.Rdata"))
+```
+
+```{r, echo=TRUE,eval=TRUE}
+length(job_sum_text)
+class(job_sum_text)
+job_sum_text[1:3]
+length(unique(job_sum_text))
+```
+
+When running a similar script for Columbus, OH, we found at least one job without a valid JobDescription node, so we put an empty string in text field.
+
+We also found an instance of the same job clearly listed under two different URLs.
+
+Let's check if this happens here, and remove such instances if so.
+
+Then, save Rdata again.
+
+```{r, echo=TRUE, eval=TRUE}
+searchAllJobUrls <- searchAllJobUrls[job_sum_text != "" & duplicated(job_sum_text) == FALSE]
+job_sum_text <- job_sum_text[job_sum_text != "" & duplicated(job_sum_text) == FALSE]
+
+length(searchAllJobUrls)
+length(job_sum_text)
+
+save(list=c("searchAllJobUrls","job_sum_text"),
+file=paste0(data_store_path,"/searchAllJobUrls_and_job_sum_text_objects_after_remove_empty_and_duplicate_postings.Rdata"))
+```
