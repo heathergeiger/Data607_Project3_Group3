@@ -2,7 +2,7 @@
 Extracting Indeed.com resume text using API call plus web scraping
 ==================================================================
 
-Heather Geiger and Raj (insert last name here)
+Heather Geiger and Raj Kumar
 ----------------------------------------------
 
 Load libraries.
