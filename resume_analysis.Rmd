@@ -1,0 +1,276 @@
+# Most frequent skills in Indeed.com resumes from New York and San Francisco
+## Heather Geiger and Raj Kumar - March 25, 2018
+
+### Load libraries and processed data.
+
+```{r, echo=TRUE,eval=TRUE}
+library(stringr)
+suppressWarnings(suppressMessages(library(tidyverse)))
+library(dplyr)
+library(ggplot2)
+```
+
+```{r, echo=TRUE, eval=TRUE}
+load("resumes_across_cities_one_text_field_per_resume.Rdata")
+```
+
+### Read in list of skills with keywords and get regular expressions for each.
+
+For each resume, we want to check for the occurence of various strings associated with each skill.
+
+Read in a table with the skill heading plus synonyms.
+
+All in lowercase.
+
+We should require these be bounded on either side by either the start/end of the string, or whitespace, or punctuation.
+
+Start by getting a list of keywords, with a vector of keywords per skill.
+
+```{r, echo=TRUE,eval=TRUE}
+keywords <- read.table("keywords.txt",header=TRUE,check.names=FALSE,stringsAsFactors=FALSE,sep="\t")
+
+#In keywords file, we included a few skills we thought would be too tough to look for using a simple word search without doing NLP (natural language processing). For now, since we are not doing NLP here, remove these skills.
+
+keywords <- keywords[grep('This is probably too tough',keywords$Other.notes,invert=TRUE),]
+
+keyword_list <- vector("list",length=nrow(keywords))
+
+for(i in 1:nrow(keywords))
+{
+keywords_this_row <- keywords$Skill[i]
+if(keywords$Synonyms[i] != "None"){
+    keywords_this_row <- c(keywords_this_row,unlist(strsplit(keywords$Synonyms[i],",")[[1]]))
+    }
+keyword_list[[i]] <- keywords_this_row
+}
+```
+
+Write a function to give a pattern for a keyword if it has a word boundary, comma, or space on each side.
+
+Then if there are multiple keywords, paste these together with a pipe.
+
+Finally, run this function for every item in keyword_list.
+
+```{r, echo=TRUE, eval=TRUE}
+#Couldn't figure out how to get a regex for a space, comma, or word boundary.
+#However did get one that can get either a space or comma.
+
+space_or_comma <- "[[:space:],]"
+word_boundary <- "\\b"
+
+pattern_for_one_keyword <- function(keyword){
+    regexes <- paste0(space_or_comma,keyword,space_or_comma)
+    regexes <- c(regexes,paste0(word_boundary,keyword,word_boundary))
+    regexes <- c(regexes,paste0(word_boundary,keyword,space_or_comma))
+    regexes <- c(regexes,paste0(space_or_comma,keyword,word_boundary))
+    return(paste0(regexes,collapse="|"))
+}
+
+pattern_for_multiple_keywords <- function(keyword_vector){
+    if(length(keyword_vector) == 1){return(pattern_for_one_keyword(keyword_vector))}
+    if(length(keyword_vector) > 1){
+        individual_regexes <- c()
+        for(i in 1:length(keyword_vector))
+        {
+            individual_regexes <- c(individual_regexes,pattern_for_one_keyword(keyword_vector[i]))
+        }
+    return(paste0(individual_regexes,collapse="|")) 
+    }
+}
+
+keyword_regexes <- unlist(lapply(keyword_list,function(x)pattern_for_multiple_keywords(x)))
+```
+
+### Extracting skills from resumes
+
+We can now use keyword_regexes along with str_detect to give a TRUE/FALSE value for whether the text contains the pattern.
+
+```{r, echo=TRUE, eval=TRUE}
+for(i in 1:length(keyword_regexes))
+{
+skill <- keyword_regexes[i]
+skill_in_text <- str_detect(tolower(resumes_across_cities$Text),skill)
+if(length(which(skill_in_text == TRUE)) >= 30) #Require that a skill be found in at least 30 resumes including both cities.
+{
+resumes_across_cities_incl_this_skill <- resumes_across_cities[skill_in_text,]
+resumes_across_cities_incl_this_skill <- resumes_across_cities_incl_this_skill %>%
+					group_by(City) %>%
+					summarize(Num.resumes = n())
+resumes_across_cities_incl_this_skill <- data.frame(Skill = keywords$Skill[i],
+					data.frame(resumes_across_cities_incl_this_skill),
+					stringsAsFactors=FALSE)
+if(!(exists("num_resumes_per_skill"))){num_resumes_per_skill <- resumes_across_cities_incl_this_skill;next}
+if(exists("num_resumes_per_skill")){num_resumes_per_skill <- rbind(num_resumes_per_skill,resumes_across_cities_incl_this_skill)}
+}}
+```
+
+Add a column Percent.resumes which expresses the percentage of resumes from the city that contain the skill.
+
+```{r, echo=TRUE, eval=TRUE}
+resumes_per_city <- resumes_across_cities %>%
+			group_by(City) %>%
+			summarize(Total.resumes.this.city = n())
+resumes_per_city <- data.frame(resumes_per_city)
+resumes_per_city[,1] <- as.vector(resumes_per_city[,1])
+
+num_resumes_per_skill <- merge(num_resumes_per_skill,resumes_per_city,"City") %>% 
+			mutate(Percent.resumes = round(Num.resumes*100/Total.resumes.this.city,digits=2))
+```
+
+Add information about whether each skill is a soft or technical skill.
+
+```{r, echo=TRUE, eval=TRUE}
+num_resumes_per_skill <- merge(num_resumes_per_skill,keywords[,c("Skill","Soft.or.technical")],by="Skill")
+```
+
+### Plotting frequency of skills in resumes across cities
+
+#### Soft skills
+
+```{r, echo=TRUE, eval=TRUE}
+ggplot(num_resumes_per_skill %>% filter(Soft.or.technical == "soft"),
+aes(x=Skill,y=Percent.resumes,fill=City)) +
+geom_bar(stat="identity",position="dodge") + 
+theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+ylab("Percent of resumes with this skill") +
+ggtitle("Soft skills in resumes across cities")
+```
+
+We find that collaboration, communication, leadership, and presentation are among the top soft skills referenced in data science job seeker resumes.
+
+It also seems like collaboration is mentioned more frequently in New York resumes. 
+
+Let's check if the difference is statistically significant.
+
+```{r, echo=TRUE, eval=TRUE}
+percent_resumes_mentioning_collaboration <- num_resumes_per_skill %>% filter(Skill == "collaboration")
+percent_resumes_mentioning_collaboration
+percent_resumes_mentioning_collaboration <- percent_resumes_mentioning_collaboration %>%
+					mutate(Num.resumes.that.do.not.mention = Total.resumes.this.city - Num.resumes) %>%
+					select(c("Num.resumes","Num.resumes.that.do.not.mention"))
+chisq.test(percent_resumes_mentioning_collaboration)
+```
+
+We find that New York data scientist job seekers on Indeed.com use keywords associated with collaboration in their resumes at a statistically significantly higher rate than San Francisco data scientist job seekers.
+
+28.7% of resumes in New York refer to collaboration, compared to only 21.4% of resumes in San Francisco.
+
+#### Technical skills - frequency by city
+
+For technical skills, there are too many skills to have two bars for each skill for all skills.
+
+Let's take the top 10 skills by absolute difference between cities, then plot just these to start.
+
+```{r, echo=TRUE, eval=TRUE}
+technical_skills_spread <- num_resumes_per_skill %>% 
+			filter(Soft.or.technical == "technical") %>%
+			select("Skill","City","Percent.resumes") %>%
+			spread("City","Percent.resumes")
+
+colnames(technical_skills_spread)[2:3] <- c("New.York","San.Francisco")
+
+technical_skills_spread <- technical_skills_spread %>%
+		mutate(City.difference = New.York - San.Francisco) %>%
+		arrange(desc(abs(City.difference)))
+
+technical_skills_spread_top_10 <- technical_skills_spread[1:10,]
+
+colnames(technical_skills_spread_top_10)[2:3] <- c("New York","San Francisco")
+
+technical_skills_top_10_most_different_by_city <- gather(technical_skills_spread_top_10[,1:3],City,Percent.resumes,-Skill)
+
+technical_skills_top_10_most_different_by_city$Skill <- factor(technical_skills_top_10_most_different_by_city$Skill,
+							levels=unique(as.vector(technical_skills_top_10_most_different_by_city$Skill)))
+
+ggplot(technical_skills_top_10_most_different_by_city,
+aes(x=Skill,y=Percent.resumes,fill=City)) +
+geom_bar(stat="identity",position="dodge") +
+theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+ylab("Percent of resumes with this skill") +
+ggtitle("Technical skills in resumes across cities\nTop 10 technical skills with most different frequency between cities")
+```
+
+It looks like New York resumes mention data visualization more often than San Francisco resumes.
+
+Again, let's check if the difference is statistically significant.
+
+```{r, echo=TRUE, eval=TRUE}
+percent_resumes_mentioning_data_visualization <- num_resumes_per_skill %>% filter(Skill == "data visualization")
+percent_resumes_mentioning_data_visualization
+percent_resumes_mentioning_data_visualization <- percent_resumes_mentioning_data_visualization %>%
+					mutate(Num.resumes.that.do.not.mention = Total.resumes.this.city - Num.resumes) %>%
+					select(c("Num.resumes","Num.resumes.that.do.not.mention"))
+chisq.test(percent_resumes_mentioning_data_visualization)
+```
+
+We do find a statistically significant difference, with data visualization mentioned more frequently in New York resumes than San Francisco resumes (37% vs. 28% of resumes).
+
+#### Technical skills - Python vs. R
+
+One of the questions we were curious about was whether or not Python or R were more popular data science skills.
+
+Let's check the numbers.
+
+```{r, echo=TRUE,eval=TRUE}
+num_resumes_per_skill_spread <- num_resumes_per_skill %>%
+				select(c("Skill","City","Percent.resumes")) %>%
+				spread(City,Percent.resumes)
+colnames(num_resumes_per_skill_spread)[2:3] <- c("New.York","San.Francisco")
+num_resumes_per_skill_spread <- num_resumes_per_skill_spread %>%
+				mutate(Mean.percent.resumes = (New.York + San.Francisco)/2)
+num_resumes_per_skill_spread %>% filter(Skill == "python" | Skill == "r")
+```
+
+We find that data scientist job seekers more frequently list Python as a skill on their resumes compared to R (64.2% of resumes in each city on average, vs. 55.5% for R).
+
+It will be interesting to see how this compares to job postings.
+
+Does more data scientists knowing Python reflect this skill being more in demand from employers?
+
+Or could less job seekers being fluent in R potentially increase the relative value of R in the job market?
+
+Let's also check the co-occurence of these two skills.
+
+```{r}
+resumes_with_python <- str_detect(tolower(resumes_across_cities$Text),keyword_regexes[keywords$Skill == "python"])
+resumes_with_R <- str_detect(tolower(resumes_across_cities$Text),keyword_regexes[keywords$Skill == "r"])
+
+round(table(resumes_with_python,resumes_with_R)/nrow(resumes_across_cities)*100,digits=1)
+```
+
+We find that a pretty large proportion of all resumes (43.8% if we do not separate by city) include both R and Python. 
+
+The relative probability that a given job seeker will know the other language if they know one of R/Python is thus quite high. 
+
+However, it is more likely for a given job seeker to know Python but not R, than to know R but not Python.
+
+#### Technical skills - frequency across cities
+
+Finally, let's plot the mean frequency for both cities for all technical skills.
+
+```{r, echo=TRUE, eval=TRUE}
+technical_skills_to_plot <- technical_skills_spread %>% 
+			mutate(Mean.percent.of.resumes = (New.York + San.Francisco)/2)
+
+technical_skills_to_plot <- technical_skills_to_plot %>%
+			arrange(Mean.percent.of.resumes)
+
+technical_skills_to_plot$Skill <- factor(technical_skills_to_plot$Skill,
+			levels=as.vector(technical_skills_to_plot$Skill))
+
+mycol <- c("#004949","#009292","#FF6DB6","#FFB677","#490092","#006DDB","#B66DFF","#6DB6FF","#B6DBFF","#920000","#924900","#DBD100","#24FF24","#FFFF6D","#000000") #Set up colorblind friendly vector. 
+
+ggplot(technical_skills_to_plot,
+aes(x=Skill,y=Mean.percent.of.resumes,fill=Skill)) +
+geom_bar(stat="identity") +
+ggtitle("Technical skills in resumes across cities") +
+theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+scale_fill_manual(values=rep(mycol,times=2)) +
+ylab("Mean percent of resumes per city")
+```
+
+The top 5 technical skills listed by data science job seekers are Python, modeling, SQL, statistics, and R.
+
+Machine learning, prediction, data visualization, data mining, and Java round out the top 10.
+
+Notably, Perl is listed by very few job seekers.
